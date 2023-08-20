@@ -49,6 +49,9 @@ public class SingleBlockSpecialMachines {
                 MachineBlockEntity::registerFluidApi,
                 ElectricWaterPumpBlockEntity::registerEnergyApi);
 
+        MachineRegistrationHelper.registerMachine("Electric Block Quarry", "electric_block_quarry", ElectricBlockQuarry::new,
+                ElectricBlockQuarry::registerEnergyApi);
+
         registerTransformers();
         registerSteamTurbines(32, 128, 512);
         registerEUStorage();
@@ -79,6 +82,7 @@ public class SingleBlockSpecialMachines {
                 MachineBlockEntity::registerItemApi);
 
         MachineRegistrationHelper.addModelsForTiers("water_pump", true, true, true, "bronze", "steel", "electric");
+        MachineRegistrationHelper.addMachineModel("electric_block_quarry", "quarry", MachineCasings.MV, true, false, false, true);
         MachineRegistrationHelper.addMachineModel("bronze_boiler", "boiler", MachineCasings.BRICKED_BRONZE, true, false, false);
         MachineRegistrationHelper.addMachineModel("steel_boiler", "boiler", MachineCasings.BRICKED_STEEL, true, false, false);
         MachineRegistrationHelper.addMachineModel("starter_diesel_generator", "diesel_generator", MachineCasings.LV, true, true, true);
