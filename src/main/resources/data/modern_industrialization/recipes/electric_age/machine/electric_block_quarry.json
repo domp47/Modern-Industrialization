@@ -1,0 +1,30 @@
+{
+  "type" : "minecraft:crafting_shaped",
+  "pattern" : [
+    "mdm",
+    "cHc",
+    "mbm"
+  ],
+  "key":
+  {
+    "m" : {
+      "item" : "modern_industrialization:large_advanced_motor"
+    },
+    "d" :{
+      "item" : "modern_industrialization:digital_circuit"
+    },
+    "c": {
+      "item" : "modern_industrialization:electronic_circuit"
+    },
+    "H" : {
+      "item" : "modern_industrialization:turbo_machine_hull"
+    },
+    "b": {
+      "item": "modern_industrialization:invar_rotary_blade"
+    }
+  },
+
+  "result": {
+    "item": "modern_industrialization:electric_block_quarry"
+  }
+}
