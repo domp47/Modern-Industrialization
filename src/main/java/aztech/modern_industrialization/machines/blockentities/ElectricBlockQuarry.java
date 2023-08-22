@@ -35,8 +35,10 @@ import aztech.modern_industrialization.machines.IComponent;
 import aztech.modern_industrialization.machines.MachineBlockEntity;
 import aztech.modern_industrialization.machines.components.EnergyComponent;
 import aztech.modern_industrialization.machines.components.IsActiveComponent;
+import aztech.modern_industrialization.machines.components.MachineInventoryComponent;
 import aztech.modern_industrialization.machines.components.OrientationComponent;
 import aztech.modern_industrialization.machines.gui.MachineGuiParameters;
+import aztech.modern_industrialization.machines.guicomponents.AutoExtract;
 import aztech.modern_industrialization.machines.guicomponents.EnergyBar;
 import aztech.modern_industrialization.machines.guicomponents.ProgressBar;
 import aztech.modern_industrialization.machines.models.MachineModelClientData;
@@ -60,13 +62,15 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
     private static final int EU_USAGE = 128;
     protected int operatingTicks = 0; // number of ticks spent pumping this iteration
     protected IsActiveComponent isActiveComponent;
-    private final MIInventory inventory;
+    private final MachineInventoryComponent inventoryComponent;
     private final EnergyComponent energy;
     private final MIEnergyStorage insertable;
     private final Block REPLACEMENT_BLOCK = Blocks.DIRT;
+    private int counter = 0;
 
+    // TODO - item pipes don't work????????????
     public ElectricBlockQuarry(BEP bep) {
-        super(bep, new MachineGuiParameters.Builder("electric_block_quarry", false).build(), new OrientationComponent.Params(true, false, false));
+        super(bep, new MachineGuiParameters.Builder("electric_block_quarry", false).build(), new OrientationComponent.Params(true, true, false));
 
         isActiveComponent = new IsActiveComponent();
         registerGuiComponent(new ProgressBar.Server(PROGRESS_BAR, () -> (float) this.operatingTicks / (OPERATION_TICKS * EU_USAGE)));
@@ -87,14 +91,17 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
         for (int i = 0; i < 4; ++i) {
             itemOutputStacks.add(ConfigurableItemStack.standardOutputSlot());
         }
+        SlotPositions itemOutputPositions = new SlotPositions.Builder().addSlots(OUTPUT_SLOT_X, OUTPUT_SLOT_Y, 2, 2).build();
+        this.inventoryComponent = new MachineInventoryComponent(Collections.emptyList(), itemOutputStacks, Collections.emptyList(),
+                Collections.emptyList(), itemOutputPositions, SlotPositions.empty());
 
-        this.inventory = new MIInventory(itemOutputStacks, Collections.emptyList(),
-                new SlotPositions.Builder().addSlots(OUTPUT_SLOT_X, OUTPUT_SLOT_Y, 2, 2).build(), SlotPositions.empty());
         this.energy = new EnergyComponent(this, 3200);
         this.insertable = energy.buildInsertable(tier -> tier == CableTier.HV);
         registerGuiComponent(new EnergyBar.Server(new EnergyBar.Parameters(18, 32), energy::getEu, energy::getCapacity));
         this.registerComponents(energy);
-        this.registerComponents(inventory);
+        this.registerComponents(inventoryComponent);
+
+        registerGuiComponent(new AutoExtract.Server(orientation, false));
     }
 
     protected long consumeEu(long max) {
@@ -102,7 +109,7 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
     }
 
     public MIInventory getInventory() {
-        return inventory;
+        return inventoryComponent.inventory;
     }
 
     protected MachineModelClientData getModelData() {
@@ -127,7 +134,7 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
     private Block getNextBlockToMine() {
         Block[] choices = new Block[] { Blocks.DIAMOND_BLOCK, Blocks.GOLD_BLOCK, Blocks.IRON_BLOCK, Blocks.NETHERITE_BLOCK, Blocks.COAL_BLOCK };
 
-        int choice = (int) (Math.random() * choices.length);
+        int choice = counter % choices.length;
 
         return choices[choice];
     }
@@ -157,7 +164,6 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
         // Trigger all clients to update their blocks
         level.setBlock(pos, REPLACEMENT_BLOCK.defaultBlockState(), 2 + 4);
         // TODO increment position
-        // TODO figure out why can't extract items.
     }
 
     @Override
@@ -171,6 +177,8 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
 
             if (slotToInsert == null) {
                 updateActive(false);
+                getInventory().autoExtractItems(level, worldPosition, orientation.outputDirection);
+                setChanged();
                 return;
             }
 
@@ -187,7 +195,10 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
                 slotToInsert.increment(1);
 
                 this.mineBlock(nextBlockPos);
+                counter++;
             }
+            getInventory().autoExtractItems(level, worldPosition, orientation.outputDirection);
+            setChanged();
         }
     }
 }
