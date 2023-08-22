@@ -45,7 +45,11 @@ import aztech.modern_industrialization.util.Tickable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import net.fabricmc.fabric.api.transfer.v1.item.ItemVariant;
+import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 
 public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable {
@@ -59,6 +63,7 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
     private final MIInventory inventory;
     private final EnergyComponent energy;
     private final MIEnergyStorage insertable;
+    private final Block REPLACEMENT_BLOCK = Blocks.DIRT;
 
     public ElectricBlockQuarry(BEP bep) {
         super(bep, new MachineGuiParameters.Builder("electric_block_quarry", false).build(), new OrientationComponent.Params(true, false, false));
@@ -119,11 +124,55 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
         isActiveComponent.updateActive(newActive, this);
     }
 
+    private Block getNextBlockToMine() {
+        Block[] choices = new Block[] { Blocks.DIAMOND_BLOCK, Blocks.GOLD_BLOCK, Blocks.IRON_BLOCK, Blocks.NETHERITE_BLOCK, Blocks.COAL_BLOCK };
+
+        int choice = (int) (Math.random() * choices.length);
+
+        return choices[choice];
+    }
+
+    private BlockPos getNextBlockPos() {
+        // TODO calculate this
+        return worldPosition.above();
+    }
+
+    private ConfigurableItemStack getResultSlot(List<ConfigurableItemStack> itemStacks, Block targetBlock) {
+        ConfigurableItemStack stackToAddTo = null;
+        ConfigurableItemStack emptyStack = null;
+        for (ConfigurableItemStack itemStack : itemStacks) {
+            if (emptyStack == null && itemStack.isEmpty()) {
+                emptyStack = itemStack;
+            } else if (itemStack.getResource().getItem().equals(targetBlock.asItem()) && itemStack.getAmount() < itemStack.getCapacity()) {
+                stackToAddTo = itemStack;
+                break;
+            }
+        }
+
+        return stackToAddTo == null ? emptyStack : stackToAddTo;
+    }
+
+    private void mineBlock(BlockPos pos) {
+        ModernIndustrialization.LOGGER.info("Digging Block....");
+        // Trigger all clients to update their blocks
+        level.setBlock(pos, REPLACEMENT_BLOCK.defaultBlockState(), 2 + 4);
+        // TODO increment position
+        // TODO figure out why can't extract items.
+    }
+
     @Override
     public void tick() {
         if (!level.isClientSide) {
+            Block nextBlock = this.getNextBlockToMine();
+            BlockPos nextBlockPos = this.getNextBlockPos();
+
             List<ConfigurableItemStack> itemStacks = this.getInventory().getItemStacks();
-            // TODO check if there is inv space.
+            ConfigurableItemStack slotToInsert = getResultSlot(itemStacks, nextBlock);
+
+            if (slotToInsert == null) {
+                updateActive(false);
+                return;
+            }
 
             long eu = consumeEu(EU_USAGE);
             updateActive(eu > 0);
@@ -134,8 +183,10 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
             operatingTicks = operatingTicks % totalEU;
 
             if (completion == 1) {
-                ModernIndustrialization.LOGGER.info("Digging Block....");
-                ModernIndustrialization.LOGGER.info(itemStacks);
+                slotToInsert.setKey(ItemVariant.of(nextBlock.asItem()));
+                slotToInsert.increment(1);
+
+                this.mineBlock(nextBlockPos);
             }
         }
     }
