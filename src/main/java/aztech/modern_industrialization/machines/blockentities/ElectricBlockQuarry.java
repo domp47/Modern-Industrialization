@@ -49,24 +49,30 @@ import java.util.Collections;
 import java.util.List;
 import net.fabricmc.fabric.api.transfer.v1.item.ItemVariant;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Vec3i;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 
 public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable {
     protected static final int OUTPUT_SLOT_X = 110;
     protected static final int OUTPUT_SLOT_Y = 30;
     private static final ProgressBar.Parameters PROGRESS_BAR = new ProgressBar.Parameters(79, 29, "extract");
-    private static final int OPERATION_TICKS = 100;
+    private static final int OPERATION_TICKS = 30;
     private static final int EU_USAGE = 128;
     protected int operatingTicks = 0; // number of ticks spent pumping this iteration
     protected IsActiveComponent isActiveComponent;
     private final MachineInventoryComponent inventoryComponent;
     private final EnergyComponent energy;
     private final MIEnergyStorage insertable;
-    private final Block REPLACEMENT_BLOCK = Blocks.DIRT;
-    private int counter = 0;
+    private final Block REPLACEMENT_BLOCK = Blocks.AIR;
+
+    private int quarryChunks = 1;
+    private BlockPos blockToMine = null;
+    private boolean miningComplete = false;
 
     // TODO - item pipes don't work????????????
     public ElectricBlockQuarry(BEP bep) {
@@ -79,11 +85,23 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
             @Override
             public void writeNbt(CompoundTag tag) {
                 tag.putInt("operatingTicks", operatingTicks);
+                tag.putInt("quarryChunks", quarryChunks);
+                tag.putBoolean("miningComplete", miningComplete);
+
+                if (blockToMine != null) {
+                    tag.putLong("blockToMine", blockToMine.asLong());
+                }
             }
 
             @Override
             public void readNbt(CompoundTag tag) {
                 operatingTicks = tag.getInt("operatingTicks");
+                quarryChunks = tag.getInt("quarryChunks");
+                miningComplete = tag.getBoolean("miningComplete");
+
+                if (tag.contains("blockToMine")) {
+                    blockToMine = BlockPos.of(tag.getLong("blockToMine"));
+                }
             }
         });
 
@@ -131,17 +149,73 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
         isActiveComponent.updateActive(newActive, this);
     }
 
-    private Block getNextBlockToMine() {
-        Block[] choices = new Block[] { Blocks.DIAMOND_BLOCK, Blocks.GOLD_BLOCK, Blocks.IRON_BLOCK, Blocks.NETHERITE_BLOCK, Blocks.COAL_BLOCK };
+    /**
+     * @return The corner of the quarry with the lowest x-axis & y-axis
+     */
+    private BlockPos getStartingBlockPos() {
+        BlockPos behindQuarry = worldPosition.relative(orientation.facingDirection, -1);
 
-        int choice = counter % choices.length;
+        int shortEdge = ((quarryChunks / 2) * 16) + 7;
+        int longEdge = ((quarryChunks - 1) * 16) + 15;
 
-        return choices[choice];
+        Vec3i quarryDelta = behindQuarry.subtract(worldPosition);
+        Vec3i startingDelta;
+        // Mine n number chunks to the north
+        if (quarryDelta.getZ() == 1) {
+            startingDelta = new Vec3i(-shortEdge, 0, 0);
+        }
+        // Mine n number of chunks to the south
+        else if (quarryDelta.getZ() == -1) {
+            startingDelta = new Vec3i(-shortEdge, 0, longEdge);
+        }
+        // Mine n number of chunks to the east
+        else if (quarryDelta.getX() == 1) {
+            startingDelta = new Vec3i(0, 0, shortEdge);
+        }
+        // Mine n number of chunks to the west
+        else {
+            startingDelta = new Vec3i(longEdge, 0, shortEdge);
+        }
+
+        return behindQuarry.offset(startingDelta).below();
     }
 
-    private BlockPos getNextBlockPos() {
-        // TODO calculate this
-        return worldPosition.above();
+    private BlockPos calculateNextBlockToMine() {
+        // This is the first block being mined. Calculate it.
+        if (miningComplete) {
+            return null;
+        }
+
+        BlockPos startingPos = getStartingBlockPos();
+
+        if (blockToMine == null) {
+            return startingPos;
+        }
+
+        int minX = startingPos.getX();
+        int maxX = minX + ((quarryChunks - 1) * 16) + 15;
+
+        int minZ = startingPos.getZ();
+        int maxZ = minZ + ((quarryChunks - 1) * 16) + 15;
+
+        for (int y = blockToMine.getY(); y > -64; y--) {
+            for (int z = blockToMine.getZ(); z <= maxZ; z++) {
+                for (int x = blockToMine.getX() + 1; x <= maxX; x++) {
+                    BlockPos blockPos = new BlockPos(x, y, z);
+                    Block block = level.getBlockState(blockPos).getBlock();
+                    FluidState fluidState = level.getFluidState(blockPos);
+
+                    if (block.equals(Blocks.AIR) || block.equals(Blocks.BEDROCK) || !fluidState.is(Fluids.EMPTY)) {
+                        continue;
+                    }
+
+                    return blockPos;
+                }
+            }
+        }
+
+        miningComplete = true;
+        return null;
     }
 
     private ConfigurableItemStack getResultSlot(List<ConfigurableItemStack> itemStacks, Block targetBlock) {
@@ -159,21 +233,57 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
         return stackToAddTo == null ? emptyStack : stackToAddTo;
     }
 
-    private void mineBlock(BlockPos pos) {
-        ModernIndustrialization.LOGGER.info("Digging Block....");
-        // Trigger all clients to update their blocks
-        level.setBlock(pos, REPLACEMENT_BLOCK.defaultBlockState(), 2 + 4);
-        // TODO increment position
-    }
-
     @Override
     public void tick() {
         if (!level.isClientSide) {
-            Block nextBlock = this.getNextBlockToMine();
-            BlockPos nextBlockPos = this.getNextBlockPos();
+            long eu = consumeEu(EU_USAGE);
+            updateActive(eu > 0);
+            operatingTicks += eu;
+
+            int totalEU = OPERATION_TICKS * EU_USAGE;
+            int completion = operatingTicks / totalEU;
+            operatingTicks = operatingTicks % totalEU;
+
+            if (completion == 1) {
+                blockToMine = calculateNextBlockToMine();
+                ModernIndustrialization.LOGGER.info("Mining Block...");
+                ModernIndustrialization.LOGGER.info(blockToMine);
+
+                if (miningComplete) {
+                    updateActive(false);
+                    getInventory().autoExtractItems(level, worldPosition, orientation.outputDirection);
+                    setChanged();
+                    return;
+                }
+
+                if (blockToMine != null) {
+                    level.setBlock(blockToMine, REPLACEMENT_BLOCK.defaultBlockState(), 2 + 4);
+                }
+            }
+        }
+    }
+
+    // @Override
+    public void tick_final() {
+        if (!level.isClientSide) {
+            BlockPos posToMine = blockToMine;
+            if (miningComplete) {
+                updateActive(false);
+                getInventory().autoExtractItems(level, worldPosition, orientation.outputDirection);
+                setChanged();
+                return;
+            }
+
+            // This is the first time we're calling this, so generate first position to mine
+            if (posToMine == null) {
+                posToMine = calculateNextBlockToMine();
+            }
+
+            // TODO maybe get contents of chest if I feel like it?
+            Block nextBlockToMine = level.getBlockState(posToMine).getBlock();
 
             List<ConfigurableItemStack> itemStacks = this.getInventory().getItemStacks();
-            ConfigurableItemStack slotToInsert = getResultSlot(itemStacks, nextBlock);
+            ConfigurableItemStack slotToInsert = getResultSlot(itemStacks, nextBlockToMine);
 
             if (slotToInsert == null) {
                 updateActive(false);
@@ -191,11 +301,11 @@ public class ElectricBlockQuarry extends MachineBlockEntity implements Tickable 
             operatingTicks = operatingTicks % totalEU;
 
             if (completion == 1) {
-                slotToInsert.setKey(ItemVariant.of(nextBlock.asItem()));
+                slotToInsert.setKey(ItemVariant.of(nextBlockToMine.asItem()));
                 slotToInsert.increment(1);
 
-                this.mineBlock(nextBlockPos);
-                counter++;
+                level.setBlock(posToMine, REPLACEMENT_BLOCK.defaultBlockState(), 2 + 4);
+                blockToMine = calculateNextBlockToMine();
             }
             getInventory().autoExtractItems(level, worldPosition, orientation.outputDirection);
             setChanged();
